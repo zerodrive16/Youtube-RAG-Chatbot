@@ -5,29 +5,27 @@ import yt_dlp
 import tempfile
 from qdrant_client import QdrantClient
 from qdrant_client.models import VectorParams, Distance, PointStruct
-from openai import OpenAI 
+from openai import OpenAI
 from dotenv import load_dotenv
 
-load_dotenv()
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"))
 
 EMBED_MODEL = "text-embedding-3-large"
 EMBED_DIM = 3072
 COLLECTION_NAME = "youtube"
-CHUNK_SIZE = 500 # max tokens / words per chunk 
-CHUNK_OVERLAP = 50 # context preservation 
+CHUNK_SIZE = 500
+CHUNK_OVERLAP = 50
 
-qdrant = QdrantClient(host="localhost", port = 6333)
+qdrant = QdrantClient(host="localhost", port=6333)
 openai_client = OpenAI()
 
-# Create the Collecition
-if not qdrant.collection_exists(COLLECTION_NAME): 
+if not qdrant.collection_exists(COLLECTION_NAME):
     qdrant.create_collection(
-        collection_name=COLLECTION_NAME, 
-        vectors_config= VectorParams(size = EMBED_DIM, distance=Distance.COSINE)
+        collection_name=COLLECTION_NAME,
+        vectors_config=VectorParams(size=EMBED_DIM, distance=Distance.COSINE),
     )
 
 
-# Download the audio from youtube
 def download_audio(youtube_url: str) -> str:
     tmp_dir = tempfile.mkdtemp()
     ydl_opts = {
@@ -63,7 +61,7 @@ def embed_text(text: str) -> list[float]:
     return response.data[0].embedding
 
 
-def ingest(youtube_url: str):
+def ingest(youtube_url: str) -> int:
     audio_path = download_audio(youtube_url)
     text = transcribe(audio_path)
     chunks = chunk_text(text)
@@ -76,6 +74,7 @@ def ingest(youtube_url: str):
         for chunk in chunks
     ]
     qdrant.upsert(collection_name=COLLECTION_NAME, points=points)
+    return len(chunks)
 
 
 def search(query: str, top_k: int = 5) -> list[str]:
@@ -84,15 +83,14 @@ def search(query: str, top_k: int = 5) -> list[str]:
     return [hit.payload["text"] for hit in results]
 
 
-# Prompt Engineering openai api 
-def chat(query: str, history: list[dict]) -> str: 
+def chat(query: str, history: list[dict]) -> str:
     context = "\n\n".join(search(query))
     system_prompt = (
         "You are a helpful assistant. Answer questions based on the following "
-        "context from the uploaded youtube url. "
+        "context from the uploaded YouTube video. "
         "If the answer cannot be found in the context, say so honestly.\n\n"
         f"Context:\n{context}"
     )
     messages = [{"role": "system", "content": system_prompt}] + history + [{"role": "user", "content": query}]
-    response = openai_client.chat.completions.create(model = "gpt-4o-mini", messages = messages)
+    response = openai_client.chat.completions.create(model="gpt-4o-mini", messages=messages)
     return response.choices[0].message.content
